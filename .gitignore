@@ -1,0 +1,18 @@
+# System
+.DS_Store
+__pycache__/
+*.pyc
+
+# Environment
+.env
+*.egg-info/
+
+# Models (too large for git)
+ml/models/*.pkl
+ml/models/*.joblib
+
+# Data (too large for git)
+data/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
