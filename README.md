@@ -1,30 +1,34 @@
-🎬 Project Cinema
+# 🎬 Lumière
 
-A personalised movie recommender powered by collaborative filtering, content-based ML, and LLM explanations — built on MovieLens data with a Dune-inspired design system.
+> Personalised movie recommendations powered by collaborative filtering, content-based ML, and LLM explanations — built on MovieLens data with a Dune-inspired design system.
 
-Built by: Casual Kalotra · Northeastern University (MS Applied Machine Intelligence)
-Status: Phase 1 — ML Core + Portfolio Demo
+**Built by:** Casual Kalotra · Northeastern University (MS Applied Machine Intelligence)  
+**Status:** Phase 1 — ML Core + Portfolio Demo
 
-What It Does
+---
 
-Recommends movies based on your ratings and preferences
-Uses a hybrid ML pipeline (Random Forest + SVD Matrix Factorization)
-LLM (Claude API) explains why each movie was recommended in plain English
-Custom 5-tier rating system: Peak Cinema · Masterpiece · Great Watch · Mid · Skip
-Fully explainable via SHAP feature importance
-Dune-inspired warm desert UI — built to grow into a full web product
+## What It Does
 
+- Recommends movies based on your ratings and preferences
+- Uses a hybrid ML pipeline (Random Forest + SVD Matrix Factorization)
+- LLM (Claude API) explains *why* each movie was recommended in plain English
+- Custom 5-tier rating system: **Peak Cinema · Masterpiece · Great Watch · Mid · Skip**
+- Fully explainable via SHAP feature importance
+- Dune-inspired warm desert UI — built to grow into a full web product
 
-Project Structure
+---
+
+## Project Structure
+
+```
 project-cinema/
-│
 ├── README.md
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 │
 ├── data/
-│   └── ml-latest-small/        # MovieLens dataset (not committed to git)
+│   └── ml-latest-small/          # MovieLens dataset (not committed to git)
 │       ├── ratings.csv
 │       ├── movies.csv
 │       ├── tags.csv
@@ -34,88 +38,145 @@ project-cinema/
 │   └── cinema_recommender.ipynb
 │
 ├── ml/
-│   ├── features.py             # Feature engineering
-│   ├── train.py                # Model training pipeline
-│   ├── predict.py              # Inference + top-N recommendations
-│   ├── evaluate.py             # Metrics + SHAP
-│   └── models/                 # Saved .pkl files (not committed to git)
+│   ├── features.py               # Feature engineering
+│   ├── train.py                  # Model training pipeline
+│   ├── predict.py                # Inference + top-N recommendations
+│   ├── evaluate.py               # Metrics + SHAP
+│   ├── llm.py                    # Claude API integration
+│   └── models/                   # Saved .pkl files (not committed to git)
 │
 ├── api/
-│   ├── main.py                 # FastAPI app (Phase 2)
-│   ├── routes/
-│   │   ├── recommendations.py
-│   │   ├── ratings.py
-│   │   └── llm.py
-│   └── db/
-│       ├── database.py
-│       └── schema.sql
+│   └── main.py                   # FastAPI app
 │
-├── frontend/                   # React app (Phase 2)
+├── frontend/                     # React + Vite app
 │   └── src/
 │       ├── components/
-│       ├── pages/
-│       └── styles/
+│       │   ├── TierBadge.jsx
+│       │   ├── GenreChip.jsx
+│       │   └── RecommendationCard.jsx
+│       ├── styles/
+│       │   └── dune.css
+│       └── App.jsx
 │
 └── docs/
-    ├── PRD.md                  # Full product requirements document
-    └── CHANGELOG.md            # What changed and when
+    ├── PRD.md                    # Full product requirements document
+    └── CHANGELOG.md              # What changed and when
+```
 
-Quickstart
-1. Clone the repo
-bashgit clone https://github.com/Casual-Kalotra-328/project-cinema.git
+---
+
+## Quickstart
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/Casual-Kalotra-328/project-cinema.git
 cd project-cinema
-2. Set up environment
-bashconda create -n cinema python=3.11
+```
+
+### 2. Set up environment
+```bash
+conda create -n cinema python=3.11
 conda activate cinema
 pip install -r requirements.txt
-3. Add your API key
-bashcp .env.example .env
+```
+
+### 3. Add your API key
+```bash
+cp .env.example .env
 # Open .env and add your Anthropic API key
-4. Download the dataset
-bash# Place MovieLens ml-latest-small files in:
-# data/ml-latest-small/
-# Download from: https://grouplens.org/datasets/movielens/latest/
-5. Train the models
-bashpython ml/train.py
-6. Run the notebook
-bashjupyter notebook notebooks/cinema_recommender.ipynb
+```
 
-ML Pipeline
-ModelPurposeAccuracyLogistic RegressionInterpretable baseline~39%Random ForestContent-based, cold-start~47%SVD (Matrix Factorization)Collaborative filteringRMSE ~0.90
+### 4. Download the dataset
+Place MovieLens ml-latest-small files in `data/ml-latest-small/`
 
-Note: 47% on a 5-class problem is strong — random baseline is 20%.
+Download from: [grouplens.org/datasets/movielens/latest](https://grouplens.org/datasets/movielens/latest/)
 
-Features Used
+### 5. Train the models
+```bash
+python -m ml.train
+```
 
-User: avg rating, rating count, rating std
-Movie: avg rating, rating count, rating std, release year, genre flags
-Tags: aggregated per movie (Phase 2)
-Reviews: sentiment score (Phase 3)
+### 6. Start the API
+```bash
+uvicorn api.main:app --reload
+```
 
+### 7. Start the frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-Rating System
-TierIconMeaningPeak Cinema🔥Life-changingMasterpiece✦Exceptional craftGreat Watch◎Solid and enjoyableMid—ForgettableSkip✕Not worth your time
+Open [http://localhost:5173](http://localhost:5173)
 
-Tech Stack
-LayerTechnologyMLscikit-learn, scipy, numpy, pandasExplainabilitySHAPLLMAnthropic Claude APIBackendFastAPI (Phase 2)FrontendReact + Tailwind (Phase 2)DatabaseSQLite → PostgreSQL (Phase 2+)
+---
 
-Roadmap
+## ML Pipeline
 
- PRD defined
- Dataset loaded + explored
- Phase 1: ML pipeline + SHAP + Top 3 LLM recommendation cards
- Phase 2: FastAPI backend + React frontend + user accounts
- Phase 3: Sentiment analysis + dark mode + social layer
- Phase 4: Mobile app
+| Model | Purpose | Result |
+|---|---|---|
+| Logistic Regression | Interpretable baseline | 45.9% accuracy |
+| Random Forest | Content-based, cold-start | 49.9% accuracy |
+| SVD (Matrix Factorization) | Collaborative filtering | RMSE 0.90 |
 
+> 5-class classification — random baseline is 20%.
 
-Dataset
-MovieLens ml-latest-small — 100,836 ratings, 9,742 movies, 610 users.
+### Features Used
+- **User:** avg rating, rating count, rating std
+- **Movie:** avg rating, rating count, rating std, release year, genre flags
+- **Tags:** aggregated per movie
+- **Explainability:** SHAP TreeExplainer per prediction
 
-F. Maxwell Harper and Joseph A. Konstan. 2015. The MovieLens Datasets. ACM TiiS 5, 4: 19:1–19:19.
+---
 
+## Rating System
 
-Author
-Casual Kalotra
-MS Applied Machine Intelligence · Northeastern University
-LinkedIn · GitHub · kalotracasual@gmail.com
+| Tier | Icon | Meaning |
+|---|---|---|
+| Peak Cinema | 🔥 | Life-changing |
+| Masterpiece | ✦ | Exceptional craft |
+| Great Watch | ◎ | Solid and enjoyable |
+| Mid | — | Forgettable |
+| Skip | ✕ | Not worth your time |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| ML | scikit-learn, scipy, numpy, pandas |
+| Explainability | SHAP |
+| LLM | Anthropic Claude API |
+| Backend | FastAPI + uvicorn |
+| Frontend | React + Vite + Tailwind |
+
+---
+
+## Roadmap
+
+- [x] PRD defined
+- [x] ML pipeline — features, training, inference, SHAP
+- [x] Claude API — recommendation explanations + intent parsing
+- [x] FastAPI backend — 6 endpoints
+- [x] React frontend — Lumière design system
+- [ ] **Phase 2:** User auth + SQLite persistence + model retraining
+- [ ] **Phase 3:** Sentiment analysis + dark mode + deployment
+- [ ] **Phase 4:** Mobile app
+
+---
+
+## Dataset
+
+[MovieLens ml-latest-small](https://grouplens.org/datasets/movielens/latest/) — 100,836 ratings · 9,742 movies · 610 users
+
+> F. Maxwell Harper and Joseph A. Konstan. 2015. The MovieLens Datasets. ACM TiiS 5, 4: 19:1–19:19.
+
+---
+
+## Author
+
+**Casual Kalotra**  
+MS Applied Machine Intelligence · Northeastern University  
+[LinkedIn](https://www.linkedin.com/in/casualkalotra) · [GitHub](https://github.com/Casual-Kalotra-328) · kalotracasual@gmail.com
