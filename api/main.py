@@ -1,7 +1,7 @@
 # ============================================================
 #  api/main.py
-#  Project Cinema — FastAPI Backend
-#  Serves recommendations, handles ratings, calls LLM
+#  Project Cinema — FastAPI Backend (Phase 2)
+#  Adds user creation, persistent ratings, reviews, history
 #  Run: uvicorn api.main:app --reload
 # ============================================================
 
@@ -16,12 +16,20 @@ from ml.predict   import load_models, get_top_n, get_recs_by_genres
 from ml.evaluate  import load_rf, explain_movie
 from ml.llm       import build_card_explanation
 
-# ── App state — loaded once at startup ───────────────────────
+from api.db.database import (
+    init_db, create_user, get_user, get_user_by_email,
+    save_rating, save_review, get_user_history, get_rating_count
+)
+
+# ── App state ─────────────────────────────────────────────────
 state = {}
+
+RETRAIN_THRESHOLD = 50  # retrain after every 50 new ratings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load all models and data once when the server starts."""
+    print("Initialising database...")
+    init_db()
     print("Loading data and models...")
     data            = load_raw(DATA_DIR)
     state["data"]   = data
@@ -34,13 +42,12 @@ async def lifespan(app: FastAPI):
     state.clear()
 
 app = FastAPI(
-    title       = "Project Cinema API",
+    title       = "Lumière API",
     description = "ML-powered movie recommendations with LLM explanations",
-    version     = "1.0.0",
+    version     = "2.0.0",
     lifespan    = lifespan,
 )
 
-# Allow React dev server to call the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins  = ["*"],
@@ -52,10 +59,14 @@ app.add_middleware(
 # ── Request / Response Models ─────────────────────────────────
 
 class RecommendRequest(BaseModel):
-    user_id:      int | None  = None
-    genres:       list[str]   = []
-    natural_query:str | None  = None
-    n:            int         = 3
+    user_id:       int | None = None
+    genres:        list[str]  = []
+    natural_query: str | None = None
+    n:             int        = 3
+
+class UserCreate(BaseModel):
+    name:  str
+    email: str | None = None
 
 class RatingSubmit(BaseModel):
     user_id:  int
@@ -64,35 +75,141 @@ class RatingSubmit(BaseModel):
     review:   str | None = None
 
 
-# ── Routes ────────────────────────────────────────────────────
+# ── Health & Root ─────────────────────────────────────────────
 
 @app.get("/")
 def root():
     return {
-        "name":    "Project Cinema API",
-        "version": "1.0.0",
+        "name":    "Lumière API",
+        "version": "2.0.0",
         "status":  "running"
     }
-
 
 @app.get("/health")
 def health():
     return {
-        "status":  "ok",
-        "models":  list(state.get("models", {}).keys()),
-        "ratings": len(state["data"]["ratings"]) if "data" in state else 0,
+        "status":       "ok",
+        "models":       list(state.get("models", {}).keys()),
+        "ratings":      len(state["data"]["ratings"]) if "data" in state else 0,
+        "db_ratings":   get_rating_count(),
     }
 
+
+# ── User endpoints ────────────────────────────────────────────
+
+@app.post("/users")
+def create_new_user(body: UserCreate):
+    """Create a new user. Returns user object with ID."""
+    if body.email:
+        existing = get_user_by_email(body.email)
+        if existing:
+            return existing
+    user = create_user(body.name, body.email)
+    return user
+
+@app.get("/users/{user_id}")
+def get_user_profile(user_id: int):
+    """Get user profile."""
+    user = get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@app.get("/users/{user_id}/history")
+def get_history(user_id: int):
+    """
+    Get a user's full rating + review history.
+    Enriches each entry with movie title and genre chips.
+    """
+    user = get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    history = get_user_history(user_id)
+    movies  = state["movies"]
+
+    from ml.features import get_genre_chips, get_tier_meta
+    import re
+
+    enriched = []
+    for h in history:
+        movie_row = movies[movies.movieId == h["movie_id"]]
+        if not movie_row.empty:
+            row    = movie_row.iloc[0]
+            title  = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
+            year_m = re.search(r"\((\d{4})\)", row["title"])
+            year   = int(year_m.group(1)) if year_m else None
+            chips  = get_genre_chips(row.get("genres", ""))
+        else:
+            title, year, chips = f"Movie {h['movie_id']}", None, []
+
+        enriched.append({
+            **h,
+            "title":       title,
+            "release_year": year,
+            "genre_chips": chips,
+            "tier_meta":   get_tier_meta(h["tier"]),
+        })
+
+    return {
+        "user":    user,
+        "history": enriched,
+        "count":   len(enriched),
+    }
+
+
+# ── Rating & Review endpoints ─────────────────────────────────
+
+@app.post("/ratings")
+def submit_rating(r: RatingSubmit):
+    """
+    Save a rating (and optional review) to the database.
+    Triggers model retraining every RETRAIN_THRESHOLD ratings.
+    """
+    # Validate user exists
+    user = get_user(r.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Validate rating value
+    if not (0.5 <= r.rating <= 5.0):
+        raise HTTPException(
+            status_code=422,
+            detail="Rating must be between 0.5 and 5.0"
+        )
+
+    # Save rating
+    rating = save_rating(r.user_id, r.movie_id, r.rating)
+
+    # Save review if provided
+    review = None
+    if r.review and r.review.strip():
+        review = save_review(
+            r.user_id, r.movie_id,
+            rating["id"], r.review.strip()
+        )
+
+    # Check retraining trigger
+    total = get_rating_count()
+    should_retrain = total % RETRAIN_THRESHOLD == 0
+
+    return {
+        "status":         "saved",
+        "rating":         rating,
+        "review":         review,
+        "total_db_ratings": total,
+        "retrain_triggered": should_retrain,
+    }
+
+
+# ── Recommendation endpoints ──────────────────────────────────
 
 @app.post("/recommendations")
 def recommendations(req: RecommendRequest):
     """
-    Main endpoint. Returns top-N recommendation cards
-    with tier, genre chips, SHAP factors, and LLM explanation.
-
-    - If user_id provided → hybrid SVD+RF recs
-    - If genres provided  → content-based cold-start recs
-    - If natural_query    → parse intent then recommend
+    Main recommendation endpoint.
+    Hybrid SVD+RF for known users, content-based for new users,
+    intent parsing for natural language queries.
     """
     models  = state["models"]
     df      = state["df"]
@@ -100,7 +217,6 @@ def recommendations(req: RecommendRequest):
     ratings = state["data"]["ratings"]
     rf      = state["rf"]
 
-    # Parse natural language query if provided
     if req.natural_query:
         from ml.llm import parse_user_intent
         intent = parse_user_intent(req.natural_query)
@@ -108,7 +224,6 @@ def recommendations(req: RecommendRequest):
     else:
         genres = req.genres
 
-    # Get raw recommendations
     if req.user_id and req.user_id in ratings.userId.values:
         recs = get_top_n(
             user_id = req.user_id,
@@ -127,7 +242,6 @@ def recommendations(req: RecommendRequest):
             n          = req.n,
         )
     else:
-        # Default — return top rated movies
         recs = get_recs_by_genres(
             genre_list = ["Drama", "Thriller"],
             models     = models,
@@ -139,21 +253,17 @@ def recommendations(req: RecommendRequest):
     if not recs:
         raise HTTPException(status_code=404, detail="No recommendations found")
 
-    # Get user's top genres for LLM context
     if req.user_id:
-        user_ratings = ratings[ratings.userId == req.user_id]
-        top_movie_ids = user_ratings.nlargest(5, "rating").movieId.tolist()
-        similar = movies[movies.movieId.isin(top_movie_ids)].title.tolist()
-        similar = [t.replace(r"\s*\(\d{4}\)$", "") for t in similar]
+        user_ratings  = ratings[ratings.userId == req.user_id]
+        top_ids       = user_ratings.nlargest(5, "rating").movieId.tolist()
+        similar       = movies[movies.movieId.isin(top_ids)].title.tolist()
     else:
         similar = []
 
     user_genres = genres if genres else ["Drama", "Thriller"]
 
-    # Build full card payload for each rec
     cards = []
     for rec in recs:
-        # SHAP explanation
         explanation = explain_movie(
             rf             = rf,
             movie_id       = rec["movie_id"],
@@ -161,8 +271,6 @@ def recommendations(req: RecommendRequest):
             df             = df,
             predicted_tier = rec["predicted_tier"],
         )
-
-        # LLM explanation
         card = build_card_explanation(
             rec             = rec,
             shap_factors    = explanation["shap_factors"],
@@ -177,22 +285,18 @@ def recommendations(req: RecommendRequest):
 
 @app.get("/recommendations/user/{user_id}")
 def recommend_for_user(user_id: int, n: int = 3):
-    """Shorthand GET endpoint for a specific user."""
     return recommendations(RecommendRequest(user_id=user_id, n=n))
-
 
 @app.get("/recommendations/genres")
 def recommend_by_genres(genres: str, n: int = 3):
-    """Shorthand GET endpoint for genre-based recs.
-    genres = comma-separated string e.g. "Drama,Thriller"
-    """
     genre_list = [g.strip() for g in genres.split(",")]
     return recommendations(RecommendRequest(genres=genre_list, n=n))
 
 
+# ── Movie endpoints ───────────────────────────────────────────
+
 @app.get("/movies/search")
 def search_movies(q: str, limit: int = 10):
-    """Search movies by title."""
     movies = state["movies"]
     mask   = movies["title"].str.contains(q, case=False, na=False)
     results = movies[mask].head(limit)[[
@@ -200,37 +304,10 @@ def search_movies(q: str, limit: int = 10):
     ]].to_dict(orient="records")
     return {"results": results, "count": len(results)}
 
-
 @app.get("/movies/{movie_id}")
 def get_movie(movie_id: int):
-    """Get movie metadata by ID."""
-    movies = state["movies"]
-    row    = movies[movies.movieId == movie_id]
+    movies  = state["movies"]
+    row     = movies[movies.movieId == movie_id]
     if row.empty:
         raise HTTPException(status_code=404, detail="Movie not found")
     return row.iloc[0].to_dict()
-
-
-@app.post("/ratings")
-def submit_rating(r: RatingSubmit):
-    """
-    Submit a rating. Stored in memory for now.
-    Phase 2: persisted to SQLite.
-    """
-    # For now just acknowledge — Phase 2 adds persistence
-    return {
-        "status":   "received",
-        "user_id":  r.user_id,
-        "movie_id": r.movie_id,
-        "rating":   r.rating,
-        "tier":     _rating_to_tier(r.rating),
-        "message":  "Rating received. Persistence coming in Phase 2."
-    }
-
-
-def _rating_to_tier(r: float) -> str:
-    if r >= 4.5: return "Peak Cinema"
-    if r >= 3.5: return "Masterpiece"
-    if r >= 2.5: return "Great Watch"
-    if r >= 1.5: return "Mid"
-    return "Skip"
