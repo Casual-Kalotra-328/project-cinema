@@ -121,8 +121,8 @@ def hybrid_scores(user_id: int, models: dict,
     """
     user_rating_count = len(ratings[ratings.userId == user_id])
 
-    # Weight: ramps from 0.2 → 0.8 as user rates more
-    svd_weight = min(0.8, 0.2 + (user_rating_count / 100) * 0.6)
+    # Weight: ramps from 0.3 → 0.9 as user rates more
+    svd_weight = min(0.9, 0.3 + (user_rating_count / 50) * 0.6)
     rf_weight  = 1 - svd_weight
 
     # SVD scores
@@ -137,14 +137,18 @@ def hybrid_scores(user_id: int, models: dict,
     # Take top candidates from SVD
     candidates = svd_sc.nlargest(n_candidates).index.tolist()
 
-    # Normalize SVD scores to [0, 1]
-    svd_norm = (svd_sc[candidates] - svd_sc[candidates].min())
-    rng      = svd_sc[candidates].max() - svd_sc[candidates].min()
-    svd_norm = svd_norm / rng if rng > 0 else svd_norm
+    # Normalize SVD scores to [0, 1] with sharper spread
+    top_svd    = svd_sc[candidates]
+    svd_min    = top_svd.min()
+    svd_range  = top_svd.max() - svd_min
+    svd_norm   = (top_svd - svd_min) / svd_range if svd_range > 0 else top_svd
+    # Apply power to sharpen differences
+    svd_norm   = svd_norm ** 0.5
 
     # RF scores for same candidates
-    rf_sc   = get_rf_scores(candidates, user_id, models, df)
-    rf_norm = rf_sc / rf_sc.max() if rf_sc.max() > 0 else rf_sc
+    rf_sc      = get_rf_scores(candidates, user_id, models, df)
+    rf_max     = rf_sc.max()
+    rf_norm    = (rf_sc / rf_max) ** 0.5 if rf_max > 0 else rf_sc
 
     # Blend
     combined = (svd_weight * svd_norm) + (rf_weight * rf_norm)

@@ -10,9 +10,10 @@
 import TierBadge from "./TierBadge"
 import { GenreChipList } from "./GenreChip"
 
-// Strip year from title e.g. "Die Hard (1988)" → "Die Hard"
+// Strip ALL year occurrences from title
+// handles "Die Hard (1988) (1988)" → "Die Hard"
 function cleanTitle(title) {
-  return title?.replace(/\s*\(\d{4}\)\s*$/, "").trim() ?? title
+  return title?.replace(/\s*\(\d{4}\)\s*/g, "").trim() ?? title
 }
 
 // Confidence arc — SVG circle showing hybrid score as %

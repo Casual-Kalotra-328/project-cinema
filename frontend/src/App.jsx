@@ -3,52 +3,87 @@ import RecommendationCard from "./components/RecommendationCard"
 
 const API = "http://localhost:8000"
 
-export default function App() {
-  const [recs,    setRecs]    = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
-  const [query,   setQuery]   = useState("")
-  const [userId,  setUserId]  = useState("")
-  const [mode,    setMode]    = useState("user") // "user" | "genre" | "chat"
+const GENRES = [
+  "Action","Comedy","Drama","Romance",
+  "Thriller","Sci-Fi","Horror","Animation"
+]
 
-  const GENRES = [
-    "Action","Comedy","Drama","Romance",
-    "Thriller","Sci-Fi","Horror","Animation"
-  ]
+function SkeletonCard({ featured }) {
+  return (
+    <div style={{
+      flex:         featured ? "1.3" : "1",
+      minWidth:     "260px",
+      height:       "480px",
+      background:   "var(--surface)",
+      border:       "1px solid var(--border)",
+      borderRadius: "12px",
+      padding:      featured ? "28px" : "22px",
+      overflow:     "hidden",
+      position:     "relative",
+    }}>
+      <div style={{
+        position:   "absolute",
+        inset:      0,
+        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 50%, transparent 100%)",
+        animation:  "shimmer 1.6s ease infinite",
+      }} />
+      {[80, 140, 60, 100, 200, 160].map((w, i) => (
+        <div key={i} style={{
+          height:       i === 1 ? "22px" : "12px",
+          width:        `${w}px`,
+          background:   "var(--border)",
+          borderRadius: "4px",
+          marginBottom: "14px",
+          opacity:      0.5,
+        }} />
+      ))}
+    </div>
+  )
+}
+
+export default function App() {
+  const [recs,           setRecs]           = useState([])
+  const [loading,        setLoading]        = useState(false)
+  const [error,          setError]          = useState(null)
+  const [query,          setQuery]          = useState("")
+  const [userId,         setUserId]         = useState("")
+  const [mode,           setMode]           = useState("user")
   const [selectedGenres, setSelectedGenres] = useState([])
+  const [hasSearched,    setHasSearched]    = useState(false)
 
   function toggleGenre(g) {
-    setSelectedGenres(prev =>
-      prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g])
+    setSelectedGenres(p =>
+      p.includes(g) ? p.filter(x => x !== g) : [...p, g])
+  }
+
+  function switchMode(m) {
+    setMode(m)
+    setRecs([])
+    setError(null)
+    setHasSearched(false)
   }
 
   async function fetchRecs() {
     setLoading(true)
     setError(null)
     setRecs([])
+    setHasSearched(true)
 
     try {
       let body = { n: 3 }
-
-      if (mode === "user" && userId) {
+      if (mode === "user" && userId)
         body.user_id = parseInt(userId)
-      } else if (mode === "genre" && selectedGenres.length) {
+      else if (mode === "genre" && selectedGenres.length)
         body.genres = selectedGenres
-      } else if (mode === "chat" && query) {
+      else if (mode === "chat" && query)
         body.natural_query = query
-      }
 
-      const res  = await fetch(`${API}/recommendations`, {
+      const res = await fetch(`${API}/recommendations`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify(body),
       })
-
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.detail ?? "API error")
-      }
-
+      if (!res.ok) throw new Error((await res.json()).detail ?? "API error")
       const data = await res.json()
       setRecs(data.recommendations)
     } catch (e) {
@@ -58,197 +93,283 @@ export default function App() {
     }
   }
 
+  const canSearch =
+    (mode === "user"  && userId.trim()) ||
+    (mode === "genre" && selectedGenres.length > 0) ||
+    (mode === "chat"  && query.trim())
+
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", padding: "48px 40px" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: "40px" }}>
-        <p style={{
-          fontSize: "11px", letterSpacing: "0.25em",
-          color: "var(--muted)", textTransform: "uppercase", marginBottom: "8px"
-        }}>
-          Project Cinema
-        </p>
-        <h1 style={{
-          fontSize: "36px", fontWeight: 700,
-          color: "var(--accent2)", letterSpacing: "-0.02em", marginBottom: "8px"
-        }}>
-          What should I watch?
-        </h1>
-        <p style={{ fontSize: "14px", color: "var(--muted)", lineHeight: 1.6 }}>
-          Powered by collaborative filtering + content-based ML, explained by Claude.
-        </p>
-      </div>
-
-      {/* Mode tabs */}
-      <div style={{
-        display: "flex", gap: "0",
-        borderBottom: "1px solid var(--border)",
-        marginBottom: "28px"
+      {/* Nav bar */}
+      <nav style={{
+        padding:        "1rem 40px",
+        borderBottom:   "1px solid var(--border)",
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        background:     "rgba(232,213,163,0.85)",
+        backdropFilter: "blur(12px)",
+        position:       "sticky",
+        top:            0,
+        zIndex:         10,
       }}>
-        {[
-          { id: "user",  label: "By User ID" },
-          { id: "genre", label: "By Genre"   },
-          { id: "chat",  label: "Ask Claude" },
-        ].map(t => (
-          <button key={t.id} onClick={() => setMode(t.id)} style={{
-            padding:       "10px 20px",
-            fontSize:      "12px",
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            background:    "transparent",
-            border:        "none",
-            borderBottom:  mode === t.id
-              ? "2px solid var(--accent2)"
-              : "2px solid transparent",
-            color:         mode === t.id ? "var(--accent2)" : "var(--muted)",
-            fontWeight:    mode === t.id ? 600 : 400,
-            cursor:        "pointer",
-            marginBottom:  "-1px",
-            transition:    "all 0.2s",
-          }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Input area */}
-      <div style={{ marginBottom: "32px", maxWidth: "600px" }}>
-
-        {mode === "user" && (
-          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-            <input
-              type="number"
-              placeholder="Enter user ID (1–610)"
-              value={userId}
-              onChange={e => setUserId(e.target.value)}
-              style={{
-                flex: 1, padding: "12px 16px", fontSize: "14px",
-                background: "var(--sand)", border: "1px solid var(--border)",
-                borderRadius: "8px", color: "var(--text)",
-                outline: "none",
-              }}
-            />
+        {/* Logo mark + wordmark */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <svg width="30" height="40" viewBox="0 0 28 28" fill="none">
+            {/* projector beams */}
+            <polygon points="14,10 6,0 10,0"  fill="#C8821A" opacity="0.3"/>
+            <polygon points="14,10 11,0 17,0" fill="#D4A017" opacity="0.4"/>
+            <polygon points="14,10 18,0 22,0" fill="#C8821A" opacity="0.3"/>
+            {/* outer ring */}
+            <circle cx="14" cy="17" r="10" fill="none" stroke="#8A5208" strokeWidth="1.8"/>
+            {/* hub */}
+            <circle cx="14" cy="17" r="2.5" fill="#8A5208"/>
+            {/* spokes */}
+            <line x1="14" y1="14.5" x2="14" y2="9"  stroke="#8A5208" strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="14" y1="19.5" x2="14" y2="25" stroke="#8A5208" strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="11.5" y1="17" x2="6"  y2="17" stroke="#8A5208" strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="16.5" y1="17" x2="22" y2="17" stroke="#8A5208" strokeWidth="1.2" strokeLinecap="round"/>
+            {/* sprocket holes */}
+            <circle cx="14" cy="7"  r="1.5" fill="#E8D5A3" stroke="#8A5208" strokeWidth="1"/>
+            <circle cx="14" cy="27" r="1.5" fill="#E8D5A3" stroke="#8A5208" strokeWidth="1"/>
+            <circle cx="4"  cy="17" r="1.5" fill="#E8D5A3" stroke="#8A5208" strokeWidth="1"/>
+            <circle cx="24" cy="17" r="1.5" fill="#E8D5A3" stroke="#8A5208" strokeWidth="1"/>
+          </svg>
+          <div>
+            <div style={{
+              fontSize:      "20px",
+              fontWeight:    700,
+              letterSpacing: "0.04em",
+              color:         "var(--accent2)",
+              fontFamily:    "Georgia, serif",
+              lineHeight:    1.5,
+            }}>
+              Lumière
+            </div>
+            <div style={{
+              fontSize:      "8px",
+              letterSpacing: "0.18em",
+              color:         "var(--muted2)",
+              textTransform: "uppercase",
+              marginTop:     "2px",
+            }}>
+              Find peak cinema
+            </div>
           </div>
-        )}
-
-        {mode === "genre" && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-            {GENRES.map(g => (
-              <button key={g} onClick={() => toggleGenre(g)} style={{
-                padding:    "6px 16px",
-                fontSize:   "12px",
-                borderRadius:"20px",
-                border:     `1px solid ${selectedGenres.includes(g)
-                  ? "var(--accent2)" : "var(--border)"}`,
-                background: selectedGenres.includes(g)
-                  ? "var(--accent2)" : "transparent",
-                color:      selectedGenres.includes(g)
-                  ? "var(--sand)" : "var(--muted)",
-                cursor:     "pointer",
-                transition: "all 0.2s",
-                fontWeight: selectedGenres.includes(g) ? 600 : 400,
-              }}>
-                {g}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {mode === "chat" && (
-          <input
-            type="text"
-            placeholder='e.g. "Something dark and psychological, not too long"'
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && fetchRecs()}
-            style={{
-              width: "100%", padding: "12px 16px", fontSize: "14px",
-              background: "var(--sand)", border: "1px solid var(--border)",
-              borderRadius: "8px", color: "var(--text)",
-              outline: "none",
-            }}
-          />
-        )}
-
-        {/* Get Recs button */}
-        <button
-          onClick={fetchRecs}
-          disabled={loading}
-          style={{
-            marginTop:     "16px",
-            padding:       "12px 32px",
-            fontSize:      "12px",
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-            fontWeight:    600,
-            background:    loading ? "var(--muted2)" : "var(--accent2)",
-            color:         "var(--sand)",
-            border:        "none",
-            borderRadius:  "8px",
-            cursor:        loading ? "not-allowed" : "pointer",
-            transition:    "background 0.2s",
-          }}
-        >
-          {loading ? "Finding your films..." : "Get Recommendations →"}
-        </button>
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div style={{
-          padding: "12px 16px", marginBottom: "24px",
-          background: "#FDE8E2", border: "1px solid #8B451360",
-          borderRadius: "8px", color: "#8B4513", fontSize: "13px"
-        }}>
-          {error}
         </div>
-      )}
+      </nav>
 
-      {/* Loading state */}
-      {loading && (
+      <div style={{ padding: "48px 40px", maxWidth: "1200px", margin: "0 auto" }}>
+
+        {/* Header */}
+        <div style={{ marginBottom: "40px" }}>
+          <h1 style={{
+            fontSize:      "clamp(28px, 4vw, 42px)",
+            fontWeight:    700,
+            color:         "var(--accent2)",
+            letterSpacing: "-0.02em",
+            marginBottom:  "10px",
+            lineHeight:    1.1,
+            fontFamily:    "Georgia, serif",
+          }}>
+            What should I watch?
+          </h1>
+          <p style={{
+            fontSize:      "13px",
+            color:         "var(--muted2)",
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+          }}>
+            Personalised recommendations · explained by AI
+          </p>
+        </div>
+
+        {/* Mode tabs */}
         <div style={{
-          display: "flex", gap: "20px", flexWrap: "wrap"
+          display:      "flex",
+          borderBottom: "1px solid var(--border)",
+          marginBottom: "28px",
         }}>
-          {[1,2,3].map(i => (
-            <div key={i} style={{
-              flex: i === 1 ? "1.3" : "1", minWidth: "260px",
-              height: "400px", background: "var(--surface)",
-              border: "1px solid var(--border)", borderRadius: "12px",
-              opacity: 0.5,
-              animation: "pulse-glow 1.5s ease infinite",
-            }} />
+          {[
+            { id: "user",  label: "By User ID" },
+            { id: "genre", label: "By Genre"   },
+            { id: "chat",  label: "Ask Claude" },
+          ].map(t => (
+            <button key={t.id} onClick={() => switchMode(t.id)} style={{
+              padding:       "10px 20px",
+              fontSize:      "11px",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              background:    "transparent",
+              border:        "none",
+              borderBottom:  mode === t.id
+                ? "2px solid var(--accent2)"
+                : "2px solid transparent",
+              color:         mode === t.id ? "var(--accent2)" : "var(--muted)",
+              fontWeight:    mode === t.id ? 600 : 400,
+              cursor:        "pointer",
+              marginBottom:  "-1px",
+              transition:    "all 0.2s",
+            }}>
+              {t.label}
+            </button>
           ))}
         </div>
-      )}
 
-      {/* Results */}
-      {!loading && recs.length > 0 && (
-        <>
-          <div style={{ marginBottom: "24px" }}>
+        {/* Input area */}
+        <div style={{ marginBottom: "28px", maxWidth: "580px" }}>
+
+          {mode === "user" && (
+            <input
+              type="number"
+              placeholder="Enter user ID (1 – 610)"
+              value={userId}
+              onChange={e => setUserId(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && canSearch && fetchRecs()}
+              style={{
+                width: "100%", padding: "12px 16px", fontSize: "14px",
+                background: "var(--sand)", border: "1px solid var(--border)",
+                borderRadius: "8px", color: "var(--text)", outline: "none",
+              }}
+            />
+          )}
+
+          {mode === "genre" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {GENRES.map(g => (
+                <button key={g} onClick={() => toggleGenre(g)} style={{
+                  padding:    "6px 16px", fontSize: "12px", borderRadius: "20px",
+                  border:     `1px solid ${selectedGenres.includes(g) ? "var(--accent2)" : "var(--border)"}`,
+                  background: selectedGenres.includes(g) ? "var(--accent2)" : "transparent",
+                  color:      selectedGenres.includes(g) ? "var(--sand)" : "var(--muted)",
+                  cursor:     "pointer", transition: "all 0.2s",
+                  fontWeight: selectedGenres.includes(g) ? 600 : 400,
+                }}>
+                  {g}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {mode === "chat" && (
+            <div>
+              <textarea
+                placeholder='Describe what you want... e.g. "Something dark and psychological, not too long" or "A fun comedy for Friday night" or "Like Parasite but funnier"'
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault()
+                    if (canSearch) fetchRecs()
+                  }
+                }}
+                rows={3}
+                style={{
+                  width: "100%", padding: "12px 16px", fontSize: "14px",
+                  background: "var(--sand)", border: "1px solid var(--border)",
+                  borderRadius: "8px", color: "var(--text)", outline: "none",
+                  resize: "none", lineHeight: 1.6, fontFamily: "inherit",
+                }}
+              />
+              <p style={{
+                fontSize: "11px", color: "var(--muted2)",
+                marginTop: "5px", letterSpacing: "0.02em",
+              }}>
+                Enter to search · Shift+Enter for new line
+              </p>
+            </div>
+          )}
+
+          {/* Search button */}
+          <button
+            onClick={fetchRecs}
+            disabled={loading || !canSearch}
+            style={{
+              marginTop:     "16px",
+              padding:       "11px 28px",
+              fontSize:      "11px",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              fontWeight:    600,
+              background:    loading || !canSearch ? "var(--muted2)" : "var(--accent2)",
+              color:         "var(--sand)",
+              border:        "none",
+              borderRadius:  "8px",
+              cursor:        loading || !canSearch ? "not-allowed" : "pointer",
+              transition:    "background 0.2s",
+              opacity:       !canSearch ? 0.6 : 1,
+            }}
+          >
+            {loading ? "Finding your films…" : "Get Recommendations →"}
+          </button>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{
+            padding: "12px 16px", marginBottom: "24px",
+            background: "#FDE8E2", border: "1px solid rgba(139,69,19,0.3)",
+            borderRadius: "8px", color: "var(--tier-skip)", fontSize: "13px",
+          }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {/* Loading skeletons */}
+        {loading && (
+          <>
+            <style>{`
+              @keyframes shimmer {
+                0%   { transform: translateX(-100%); }
+                100% { transform: translateX(100%); }
+              }
+            `}</style>
+            <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+              <SkeletonCard featured />
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
+          </>
+        )}
+
+        {/* Empty state */}
+        {!loading && hasSearched && recs.length === 0 && !error && (
+          <div style={{
+            padding: "48px", textAlign: "center",
+            color: "var(--muted2)", fontSize: "14px",
+          }}>
+            No recommendations found. Try different inputs.
+          </div>
+        )}
+
+        {/* Results */}
+        {!loading && recs.length > 0 && (
+          <>
             <p style={{
               fontSize: "11px", letterSpacing: "0.2em",
-              color: "var(--accent3)", textTransform: "uppercase"
+              color: "var(--accent3)", textTransform: "uppercase",
+              marginBottom: "20px",
             }}>
               Your top {recs.length} picks
             </p>
-          </div>
-          <div style={{
-            display: "flex", gap: "20px",
-            alignItems: "flex-start", flexWrap: "wrap"
-          }}>
-            {recs.map((rec, i) => (
-              <RecommendationCard
-                key={rec.movie_id}
-                rec={rec}
-                rank={i + 1}
-                delay={i * 120}
-              />
-            ))}
-          </div>
-        </>
-      )}
+            <div style={{
+              display: "flex", gap: "20px",
+              alignItems: "flex-start", flexWrap: "wrap",
+            }}>
+              {recs.map((rec, i) => (
+                <RecommendationCard
+                  key={rec.movie_id}
+                  rec={rec}
+                  rank={i + 1}
+                  delay={i * 120}
+                />
+              ))}
+            </div>
+          </>
+        )}
 
+      </div>
     </div>
   )
 }

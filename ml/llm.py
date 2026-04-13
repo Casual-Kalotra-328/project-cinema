@@ -125,13 +125,39 @@ Return this exact JSON structure:
   "raw":     "{user_input}"
 }}"""
 
-    response = CLIENT.messages.create(
-        model=MODEL,
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    text = response.content[0].text.strip()
+    text = None
+    for attempt in range(3):
+        try:
+            response = CLIENT.messages.create(
+                model=MODEL,
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            text = response.content[0].text.strip()
+            break
+        except anthropic.APIStatusError as e:
+            if e.status_code == 529 and attempt < 2:
+                import time
+                time.sleep(2 ** attempt)
+                continue
+            # Fallback — extract basic genre from raw input
+            return {
+                "genres":  ["Drama"],
+                "mood":    None,
+                "runtime": "any",
+                "tone":    "any",
+                "era":     "any",
+                "raw":     user_input
+            }
+    if text is None:
+        return {
+            "genres":  ["Drama"],
+            "mood":    None,
+            "runtime": "any",
+            "tone":    "any",
+            "era":     "any",
+            "raw":     user_input
+        }
 
     # Strip markdown code fences if present
     if text.startswith("```"):
