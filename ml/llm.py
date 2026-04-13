@@ -65,13 +65,23 @@ Primary match signal: {match_reason}
 
 Write the explanation now. 2-3 sentences maximum."""
 
-    response = CLIENT.messages.create(
-        model=MODEL,
-        max_tokens=150,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return response.content[0].text.strip()
+    for attempt in range(3):
+        try:
+            response = CLIENT.messages.create(
+                model=MODEL,
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text.strip()
+        except anthropic.APIStatusError as e:
+            if e.status_code == 529 and attempt < 2:
+                import time
+                time.sleep(2 ** attempt)
+                continue
+            # Fallback explanation if all retries fail
+            genres = ", ".join(c["name"] for c in genre_chips[:2])
+            return (f"{movie_title} is a strong match based on your "
+                    f"{genres} preferences and viewing history.")
 
 
 # ── 2. Natural Language Intent Parser ────────────────────────
