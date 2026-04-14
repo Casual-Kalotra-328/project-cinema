@@ -41,8 +41,8 @@ def explain_recommendation(
     genres     = ", ".join(c["name"] for c in genre_chips[:3])
     top_genres = ", ".join(user_top_genres) \
         if user_top_genres else "Drama, Thriller"
-    similar    = ", ".join(similar_movies) \
-        if similar_movies else "films you've loved"
+    sim_list    = ", ".join(similar_movies) if similar_movies else None
+    context_str = f"Similar movies they've enjoyed: {sim_list}" if sim_list else "This is a new user with no rating history yet."
 
     top_factors = [f["label"] for f in shap_factors
                    if f["direction"] == "up"][:2]
@@ -60,7 +60,7 @@ Predicted tier: {tier_icon} {predicted_tier}
 Genres: {genres}
 Key match reasons (from ML model): {factors_str}
 User's top genres: {top_genres}
-Similar movies they've enjoyed: {similar}
+{context_str}
 Primary match signal: {match_reason}
 
 Write the explanation now. 2-3 sentences maximum."""

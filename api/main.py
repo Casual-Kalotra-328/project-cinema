@@ -116,35 +116,57 @@ def get_user_by_email_endpoint(email: str):
     return user
 
 @app.get("/users/{user_id}/history")
-def get_history(user_id: int):
-    user = get_user(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    history = get_user_history(user_id)
-    movies  = state["movies"]
-    from ml.features import get_genre_chips, get_tier_meta
-    import re
-    enriched = []
-    for h in history:
-        movie_row = movies[movies.movieId == h["movie_id"]]
-        if not movie_row.empty:
-            row   = movie_row.iloc[0]
-            title = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
-            yr    = re.search(r"\((\d{4})\)", row["title"])
-            year  = int(yr.group(1)) if yr else None
-            chips = get_genre_chips(row.get("genres", ""))
-        else:
-            title, year, chips = "Movie {}".format(h["movie_id"]), None, []
-        enriched.append({**h, "title": title, "release_year": year,
-                         "genre_chips": chips, "tier_meta": get_tier_meta(h["tier"])})
-    return {"user": user, "history": enriched, "count": len(enriched)}
-
-@app.get("/users/{user_id}")
 def get_user_profile(user_id: int):
+    """Get user profile."""
     user = get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+@app.get("/users/{user_id}/history")
+def get_history(user_id: int):
+    """
+    Get a user's full rating + review history.
+    Enriches each entry with movie title and genre chips.
+    """
+    user = get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    history = get_user_history(user_id)
+    movies  = state["movies"]
+
+    from ml.features import get_genre_chips, get_tier_meta
+    import re
+
+    enriched = []
+    for h in history:
+        movie_row = movies[movies.movieId == h["movie_id"]]
+        if not movie_row.empty:
+            row    = movie_row.iloc[0]
+            title  = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
+            year_m = re.search(r"\((\d{4})\)", row["title"])
+            year   = int(year_m.group(1)) if year_m else None
+            chips  = get_genre_chips(row.get("genres", ""))
+        else:
+            title, year, chips = f"Movie {h['movie_id']}", None, []
+
+        enriched.append({
+            **h,
+            "title":       title,
+            "release_year": year,
+            "genre_chips": chips,
+            "tier_meta":   get_tier_meta(h["tier"]),
+        })
+
+    return {
+        "user":    user,
+        "history": enriched,
+        "count":   len(enriched),
+    }
+
+
+# ── Rating & Review endpoints ─────────────────────────────────
 
 @app.post("/ratings")
 def submit_rating(r: RatingSubmit):
@@ -239,14 +261,24 @@ def recommendations(req: RecommendRequest):
     if not recs:
         raise HTTPException(status_code=404, detail="No recommendations found")
 
+    # Get user's actual rated movies from DB (not MovieLens dataset)
+    from api.db.database import get_user_history
     if req.user_id:
-        user_ratings  = ratings[ratings.userId == req.user_id]
-        top_ids       = user_ratings.nlargest(5, "rating").movieId.tolist()
-        similar       = movies[movies.movieId.isin(top_ids)].title.tolist()
+        db_history = get_user_history(req.user_id)
+        # Only use movies they rated Peak Cinema or Masterpiece
+        top_rated  = [h for h in db_history
+                      if h["tier"] in ("Peak Cinema", "Masterpiece")]
+        if top_rated:
+            # Get titles from movies dataframe
+            top_ids = [h["movie_id"] for h in top_rated[:5]]
+            similar = movies[movies.movieId.isin(top_ids)].title.tolist()
+            similar = [re.sub(r"\s*\(\d{4}\)\s*", "", t).strip() for t in similar]
+        else:
+            similar = []  # new user — no history yet
+        user_genres = genres if genres else ["Drama", "Thriller"]
     else:
-        similar = []
-
-    user_genres = genres if genres else ["Drama", "Thriller"]
+        similar     = []
+        user_genres = genres if genres else ["Drama", "Thriller"]
 
     cards = []
     for rec in recs:
