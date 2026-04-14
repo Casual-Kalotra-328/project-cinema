@@ -133,7 +133,7 @@ function ShapFactors({ factors = [] }) {
   )
 }
 
-export default function RecommendationCard({ rec, rank = 1, delay = 0 }) {
+export default function RecommendationCard({ rec, rank = 1, delay = 0, onRate }) {
   const isFeatured = rank === 1
   const title      = cleanTitle(rec.title)
   const tierColor  = rec.tier_color ?? "var(--accent3)"
@@ -273,21 +273,13 @@ export default function RecommendationCard({ rec, rank = 1, delay = 0 }) {
         opacity:       0.9
       }}>
         <button style={{
-          flex:          1,
-          padding:       "8px",
-          fontSize:      "11px",
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          background:    "var(--accent2)",
-          color:         "var(--sand)",
-          border:        "none",
-          borderRadius:  "6px",
-          cursor:        "pointer",
-          fontWeight:    600,
-          transition:    "background 0.2s"
+          flex:1, padding:"8px", fontSize:"11px", letterSpacing:"0.1em",
+          textTransform:"uppercase", background:"var(--accent2)", color:"var(--sand)",
+          border:"none", borderRadius:"6px", cursor:"pointer", fontWeight:600, transition:"background 0.2s"
         }}
-          onMouseEnter={e => e.target.style.background = "var(--accent)"}
-          onMouseLeave={e => e.target.style.background = "var(--accent2)"}
+          onClick={onRate}
+          onMouseEnter={e=>e.target.style.background="var(--accent)"}
+          onMouseLeave={e=>e.target.style.background="var(--accent2)"}
         >
           Rate it
         </button>

@@ -107,58 +107,44 @@ def create_new_user(body: UserCreate):
     user = create_user(body.name, body.email)
     return user
 
-@app.get("/users/{user_id}")
-def get_user_profile(user_id: int):
-    """Get user profile."""
-    user = get_user(user_id)
+@app.get("/users/by-email")
+def get_user_by_email_endpoint(email: str):
+    """Look up a user by email for returning user login."""
+    user = get_user_by_email(email)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="No account found with that email")
     return user
 
 @app.get("/users/{user_id}/history")
 def get_history(user_id: int):
-    """
-    Get a user's full rating + review history.
-    Enriches each entry with movie title and genre chips.
-    """
     user = get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
     history = get_user_history(user_id)
     movies  = state["movies"]
-
     from ml.features import get_genre_chips, get_tier_meta
     import re
-
     enriched = []
     for h in history:
         movie_row = movies[movies.movieId == h["movie_id"]]
         if not movie_row.empty:
-            row    = movie_row.iloc[0]
-            title  = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
-            year_m = re.search(r"\((\d{4})\)", row["title"])
-            year   = int(year_m.group(1)) if year_m else None
-            chips  = get_genre_chips(row.get("genres", ""))
+            row   = movie_row.iloc[0]
+            title = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
+            yr    = re.search(r"\((\d{4})\)", row["title"])
+            year  = int(yr.group(1)) if yr else None
+            chips = get_genre_chips(row.get("genres", ""))
         else:
-            title, year, chips = f"Movie {h['movie_id']}", None, []
+            title, year, chips = "Movie {}".format(h["movie_id"]), None, []
+        enriched.append({**h, "title": title, "release_year": year,
+                         "genre_chips": chips, "tier_meta": get_tier_meta(h["tier"])})
+    return {"user": user, "history": enriched, "count": len(enriched)}
 
-        enriched.append({
-            **h,
-            "title":       title,
-            "release_year": year,
-            "genre_chips": chips,
-            "tier_meta":   get_tier_meta(h["tier"]),
-        })
-
-    return {
-        "user":    user,
-        "history": enriched,
-        "count":   len(enriched),
-    }
-
-
-# ── Rating & Review endpoints ─────────────────────────────────
+@app.get("/users/{user_id}")
+def get_user_profile(user_id: int):
+    user = get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 @app.post("/ratings")
 def submit_rating(r: RatingSubmit):
