@@ -4,6 +4,7 @@ import RateModal          from "./components/RateModal"
 import UserSetup          from "./components/UserSetup"
 import Profile            from "./pages/Profile"
 import { Avatar }         from "./components/AvatarUpload"
+import MovieSearch        from "./components/MovieSearch"
 
 const API = "http://localhost:8000"
 
@@ -164,9 +165,10 @@ export default function App() {
           <h1 style={{ fontSize:"clamp(28px,4vw,42px)", fontWeight:700, color:"var(--accent2)", letterSpacing:"-0.02em", marginBottom:"10px", lineHeight:1.1, fontFamily:"Georgia, serif" }}>
             What should I watch?
           </h1>
-          <p style={{ fontSize:"13px", color:"var(--muted2)", letterSpacing:"0.06em", textTransform:"uppercase" }}>
+          <p style={{ fontSize:"13px", color:"var(--muted2)", letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:"20px" }}>
             Personalised recommendations · explained by AI
           </p>
+          <MovieSearch userId={user.id} onRated={() => {}} />
         </div>
 
         {/* Tabs */}

@@ -16,6 +16,11 @@ from ml.predict   import load_models, get_top_n, get_recs_by_genres
 from ml.evaluate  import load_rf, explain_movie
 from ml.llm       import build_card_explanation
 
+
+RETRAIN_THRESHOLD = 50
+TMDB_TOKEN        = os.getenv("TMDB_API_KEY", "")
+TMDB_BASE         = "https://api.themoviedb.org/3"
+
 from api.db.database import (
     init_db, create_user, get_user, get_user_by_email,
     save_rating, save_review, get_user_history,
@@ -24,7 +29,13 @@ from api.db.database import (
 
 # ── State ─────────────────────────────────────────────────────
 state = {}
-RETRAIN_THRESHOLD = 50
+def clean_title(title: str) -> str:
+    """Convert 'Avengers, The (2012)' → 'The Avengers'"""
+    t = re.sub(r"\s*\(\d{4}\)\s*", "", title).strip()
+    # Move trailing ", The" / ", A" / ", An" to front
+    t = re.sub(r"^(.*),\s*(The|A|An|Les|La|Le|Das|Die|Der)$",
+               r"\2 \1", t, flags=re.IGNORECASE)
+    return t.strip()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -67,7 +78,7 @@ class UserCreate(BaseModel):
 
 class RatingSubmit(BaseModel):
     user_id:  int
-    movie_id: int
+    movie_id: str | int  # int for MovieLens, "tmdb_XXX" for TMDB
     rating:   float
     review:   str | None = None
 
@@ -130,7 +141,7 @@ def get_history(user_id: int):
         movie_row = movies[movies.movieId == h["movie_id"]]
         if not movie_row.empty:
             row   = movie_row.iloc[0]
-            title = re.sub(r"\s*\(\d{4}\)\s*", " ", row["title"]).strip()
+            title = clean_title(row["title"])
             yr    = re.search(r"\((\d{4})\)", row["title"])
             year  = int(yr.group(1)) if yr else None
             chips = get_genre_chips(row.get("genres", ""))
@@ -162,10 +173,17 @@ def submit_rating(r: RatingSubmit):
         raise HTTPException(status_code=404, detail="User not found")
     if not (0.5 <= r.rating <= 5.0):
         raise HTTPException(status_code=422, detail="Rating must be 0.5–5.0")
-    rating = save_rating(r.user_id, r.movie_id, r.rating)
+
+    # For TMDB movies use a large negative ID to avoid conflicts
+    if isinstance(r.movie_id, str) and r.movie_id.startswith("tmdb_"):
+        movie_id = -(int(r.movie_id.replace("tmdb_", "")))
+    else:
+        movie_id = int(r.movie_id)
+
+    rating = save_rating(r.user_id, movie_id, r.rating)
     review = None
     if r.review and r.review.strip():
-        review = save_review(r.user_id, r.movie_id, rating["id"], r.review.strip())
+        review = save_review(r.user_id, movie_id, rating["id"], r.review.strip())
     total = get_rating_count()
     return {
         "status":            "saved",
@@ -200,8 +218,9 @@ def recommendations(req: RecommendRequest):
     else:
         recs = get_recs_by_genres(["Drama","Thriller"], models, df, movies, n=req.n)
 
-    if not recs:
-        raise HTTPException(status_code=404, detail="No recommendations found")
+    # Clean titles in recommendations too
+    for rec in recs:
+        rec["title"] = clean_title(rec.get("title", ""))
 
     # Get user's actual DB history for LLM context
     if req.user_id:
@@ -246,6 +265,75 @@ def recommend_by_genres(genres: str, n: int = 3):
 
 
 # ── Movies ────────────────────────────────────────────────────
+
+# ── Search ────────────────────────────────────────────────────
+
+@app.get("/search")
+def search(q: str, limit: int = 8):
+    import httpx
+    movies  = state["movies"]
+    results = []
+
+    # 1. MovieLens search
+    mask = movies["title"].str.contains(q, case=False, na=False)
+    ml_results = movies[mask].head(4)
+    for _, row in ml_results.iterrows():
+        title     = row["title"]
+        clean     = clean_title(title)
+        yr        = re.search(r"\((\d{4})\)", title)
+        year      = int(yr.group(1)) if yr else None
+        from ml.features import get_genre_chips
+        chips = get_genre_chips(row.get("genres", ""))
+        results.append({
+            "movie_id":     int(row["movieId"]),
+            "title":        clean,
+            "full_title":   title,
+            "release_year": year,
+            "genres":       row.get("genres", ""),
+            "genre_chips":  chips,
+            "poster":       None,
+            "source":       "movielens",
+        })
+
+    # 2. Always try TMDB for newer/more results
+    if TMDB_TOKEN:
+        try:
+            resp = httpx.get(
+                f"{TMDB_BASE}/search/movie",
+                headers={"Authorization": f"Bearer {TMDB_TOKEN}"},
+                params={"query": q, "include_adult": "false", "page": 1},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                ml_titles  = {r["title"].lower() for r in results}
+                tmdb_movies = resp.json().get("results", [])
+                for m in tmdb_movies:
+                    title = m.get("title", "")
+                    if title.lower() in ml_titles:
+                        continue
+                    rd   = m.get("release_date", "")
+                    year = int(rd[:4]) if rd else None
+                    poster = (f"https://image.tmdb.org/t/p/w200{m['poster_path']}"
+                              if m.get("poster_path") else None)
+                    results.append({
+                        "movie_id":     f"tmdb_{m['id']}",
+                        "title":        title,
+                        "full_title":   f"{title} ({year})" if year else title,
+                        "release_year": year,
+                        "genres":       "",
+                        "genre_chips":  [],
+                        "poster":       poster,
+                        "overview":     m.get("overview", ""),
+                        "source":       "tmdb",
+                        "tmdb_id":      m["id"],
+                    })
+                    if len(results) >= limit:
+                        break
+        except Exception as e:
+            print(f"TMDB error: {e}")
+
+    return {"results": results[:limit], "count": len(results[:limit])}
+
 
 @app.get("/movies/search")
 def search_movies(q: str, limit: int = 10):
