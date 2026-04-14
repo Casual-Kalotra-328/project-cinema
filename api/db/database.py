@@ -1,18 +1,15 @@
 # ============================================================
 #  api/db/database.py
 #  Project Cinema — SQLite Database Layer
-#  Handles all DB operations for users, ratings, reviews
 # ============================================================
 
 import sqlite3
 import os
-from datetime import datetime
 
 DB_PATH = "api/db/lumiere.db"
 
 
 def get_conn():
-    """Get a database connection with row factory."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -20,22 +17,26 @@ def get_conn():
 
 
 def init_db():
-    """Create tables if they don't exist."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_conn()
     c = conn.cursor()
 
-    # Users table
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             name       TEXT    NOT NULL,
             email      TEXT    UNIQUE,
+            avatar     TEXT,
             created_at TEXT    NOT NULL DEFAULT (datetime('now'))
         )
     """)
 
-    # Ratings table
+    # Add avatar column if it doesn't exist (migration)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN avatar TEXT")
+    except Exception:
+        pass
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS ratings (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +50,6 @@ def init_db():
         )
     """)
 
-    # Reviews table
     c.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,19 +69,15 @@ def init_db():
     print("✓ Database initialised")
 
 
-# ── User operations ───────────────────────────────────────────
+# ── Users ─────────────────────────────────────────────────────
 
 def create_user(name: str, email: str | None = None) -> dict:
     conn = get_conn()
     try:
         c = conn.cursor()
-        c.execute(
-            "INSERT INTO users (name, email) VALUES (?, ?)",
-            (name.strip(), email)
-        )
+        c.execute("INSERT INTO users (name, email) VALUES (?, ?)", (name.strip(), email))
         conn.commit()
-        user_id = c.lastrowid
-        return get_user(user_id)
+        return get_user(c.lastrowid)
     finally:
         conn.close()
 
@@ -89,9 +85,7 @@ def create_user(name: str, email: str | None = None) -> dict:
 def get_user(user_id: int) -> dict | None:
     conn = get_conn()
     try:
-        row = conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -100,15 +94,23 @@ def get_user(user_id: int) -> dict | None:
 def get_user_by_email(email: str) -> dict | None:
     conn = get_conn()
     try:
-        row = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-# ── Rating operations ─────────────────────────────────────────
+def update_avatar(user_id: int, avatar_b64: str) -> dict | None:
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE users SET avatar=? WHERE id=?", (avatar_b64, user_id))
+        conn.commit()
+        return get_user(user_id)
+    finally:
+        conn.close()
+
+
+# ── Ratings ───────────────────────────────────────────────────
 
 def _to_tier(r: float) -> str:
     if r >= 4.5: return "Peak Cinema"
@@ -118,9 +120,7 @@ def _to_tier(r: float) -> str:
     return "Skip"
 
 
-def save_rating(user_id: int, movie_id: int,
-                rating: float) -> dict:
-    """Insert or update a rating."""
+def save_rating(user_id: int, movie_id: int, rating: float) -> dict:
     tier = _to_tier(rating)
     conn = get_conn()
     try:
@@ -128,37 +128,33 @@ def save_rating(user_id: int, movie_id: int,
             INSERT INTO ratings (user_id, movie_id, rating, tier)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id, movie_id)
-            DO UPDATE SET rating=excluded.rating,
-                          tier=excluded.tier,
+            DO UPDATE SET rating=excluded.rating, tier=excluded.tier,
                           created_at=datetime('now')
         """, (user_id, movie_id, rating, tier))
         conn.commit()
-        row = conn.execute("""
-            SELECT * FROM ratings
-            WHERE user_id=? AND movie_id=?
-        """, (user_id, movie_id)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM ratings WHERE user_id=? AND movie_id=?",
+            (user_id, movie_id)
+        ).fetchone()
         return dict(row)
     finally:
         conn.close()
 
 
-def save_review(user_id: int, movie_id: int,
-                rating_id: int, review: str) -> dict:
-    """Insert or update a review."""
+def save_review(user_id: int, movie_id: int, rating_id: int, review: str) -> dict:
     conn = get_conn()
     try:
         conn.execute("""
             INSERT INTO reviews (user_id, movie_id, rating_id, review)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id, movie_id)
-            DO UPDATE SET review=excluded.review,
-                          created_at=datetime('now')
+            DO UPDATE SET review=excluded.review, created_at=datetime('now')
         """, (user_id, movie_id, rating_id, review))
         conn.commit()
-        row = conn.execute("""
-            SELECT * FROM reviews
-            WHERE user_id=? AND movie_id=?
-        """, (user_id, movie_id)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM reviews WHERE user_id=? AND movie_id=?",
+            (user_id, movie_id)
+        ).fetchone()
         return dict(row)
     finally:
         conn.close()
@@ -167,11 +163,6 @@ def save_review(user_id: int, movie_id: int,
 # ── History ───────────────────────────────────────────────────
 
 def get_user_history(user_id: int) -> list[dict]:
-    """
-    Return all ratings + reviews for a user,
-    joined with movie title from the ML dataset.
-    Ordered by most recent first.
-    """
     conn = get_conn()
     try:
         rows = conn.execute("""
@@ -196,42 +187,8 @@ def get_user_history(user_id: int) -> list[dict]:
 
 
 def get_rating_count() -> int:
-    """Total ratings in the DB — used for retraining trigger."""
     conn = get_conn()
     try:
-        return conn.execute(
-            "SELECT COUNT(*) FROM ratings"
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM ratings").fetchone()[0]
     finally:
         conn.close()
-
-
-# ── Quick test ────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    print("=" * 45)
-    print("  database.py — smoke test")
-    print("=" * 45)
-
-    init_db()
-
-    # Create user
-    user = create_user("Casual Kalotra", "kalotracasual@gmail.com")
-    print(f"\nCreated user: {user}")
-
-    # Save rating
-    rating = save_rating(user["id"], 1, 5.0)
-    print(f"Saved rating: {rating}")
-
-    # Save review
-    review = save_review(user["id"], 1, rating["id"],
-                         "Absolutely brilliant. Peak Cinema without question.")
-    print(f"Saved review: {review}")
-
-    # Get history
-    history = get_user_history(user["id"])
-    print(f"\nHistory ({len(history)} entries):")
-    for h in history:
-        print(f"  movie {h['movie_id']} · {h['tier']} · {h['review']}")
-
-    print("\n✓ database.py OK")

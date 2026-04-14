@@ -3,6 +3,7 @@ import RecommendationCard from "./components/RecommendationCard"
 import RateModal          from "./components/RateModal"
 import UserSetup          from "./components/UserSetup"
 import Profile            from "./pages/Profile"
+import { Avatar }         from "./components/AvatarUpload"
 
 const API = "http://localhost:8000"
 
@@ -67,6 +68,7 @@ function LumiereNav({ user, onProfile, onLogout }) {
       </div>
       {user && (
         <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
+          <Avatar user={user} size={32} />
           <span style={{ fontSize:"13px", color:"var(--muted)", letterSpacing:"0.02em" }}>{user.name}</span>
           <button onClick={onProfile} style={{
             padding:"6px 14px", fontSize:"11px", letterSpacing:"0.1em", textTransform:"uppercase",
@@ -142,8 +144,16 @@ export default function App() {
   }
 
   if (!user)          return <UserSetup onComplete={u => setUser(u)} />
-  if (page==="profile") return <Profile user={user} onBack={() => setPage("home")} />
-
+  if (page==="profile") return (
+    <Profile
+      user={user}
+      onBack={() => setPage("home")}
+      onUserUpdated={u => {
+        setUser(u)
+        localStorage.setItem("lumiere_user", JSON.stringify(u))
+      }}
+    />
+  )
   return (
     <div style={{ minHeight:"100vh", background:"var(--bg)" }}>
       <LumiereNav user={user} onProfile={() => setPage("profile")} onLogout={handleLogout} />

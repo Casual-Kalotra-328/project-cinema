@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import TierBadge from "../components/TierBadge"
 import { GenreChipList } from "../components/GenreChip"
+import AvatarUpload, { Avatar } from "../components/AvatarUpload"
 
 const API = "http://localhost:8000"
 
@@ -56,10 +57,16 @@ function TierDistribution({ history = [] }) {
   )
 }
 
-export default function Profile({ user, onBack }) {
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState(null)
+export default function Profile({ user, onBack, onUserUpdated }) {
+  const [data,        setData]        = useState(null)
+  const [localUser,   setLocalUser]   = useState(user)
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState(null)
+
+  function handleAvatarUpdated(updated) {
+    setLocalUser(updated)
+    onUserUpdated?.(updated)
+  }
 
   useEffect(() => {
     if (!user?.id) return
@@ -71,7 +78,7 @@ export default function Profile({ user, onBack }) {
   }, [user?.id])
 
   const history  = data?.history  ?? []
-  const profile  = data?.user     ?? user
+  const profile  = localUser
   const reviewed = history.filter(h => h.review).length
 
   const topTier = history.length
@@ -85,14 +92,19 @@ export default function Profile({ user, onBack }) {
     <div style={{ minHeight:"100vh", background:"var(--bg)" }}>
       {/* Header */}
       <div style={{
-        padding:"28px 40px", borderBottom:"1px solid var(--border)",
-        display:"flex", alignItems:"center", gap:"16px", background:"var(--surface)",
+        padding:"20px 40px", borderBottom:"1px solid var(--border)",
+        display:"flex", alignItems:"center", gap:"20px",
+        background:"var(--surface)", flexWrap:"nowrap", overflow:"hidden",
       }}>
         <button onClick={onBack} style={{
           background:"transparent", border:"1px solid var(--border)", borderRadius:"6px",
-          padding:"6px 12px", fontSize:"11px", color:"var(--muted)", cursor:"pointer", letterSpacing:"0.08em",
+          padding:"6px 12px", fontSize:"11px", color:"var(--muted)", cursor:"pointer",
+          letterSpacing:"0.08em", flexShrink:0,
         }}>← Back</button>
-        <div>
+        <div style={{ width:80, height:80, flexShrink:0, position:"relative" }}>
+          <AvatarUpload user={localUser} onUpdated={handleAvatarUpdated} showButton={false} />
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
           <h2 style={{ fontSize:"20px", fontWeight:700, color:"var(--accent2)", fontFamily:"Georgia, serif", lineHeight:1 }}>
             {profile?.name ?? ""}
           </h2>
