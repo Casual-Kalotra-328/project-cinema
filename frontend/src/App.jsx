@@ -99,9 +99,22 @@ export default function App() {
   useEffect(() => {
     const stored = localStorage.getItem("lumiere_user")
     if (stored) { try { setUser(JSON.parse(stored)) } catch {} }
+    else {
+      setRecs([])
+      setHasSearched(false)
+    }
   }, [])
 
-  function handleLogout() { localStorage.removeItem("lumiere_user"); setUser(null) }
+  function handleLogout() {
+    localStorage.removeItem("lumiere_user")
+    setUser(null)
+    setRecs([])
+    setHasSearched(false)
+    setError(null)
+    setMode("user")
+    setQuery("")
+    setSelectedGenres([])
+  }
   function toggleGenre(g) { setSelectedGenres(p => p.includes(g) ? p.filter(x=>x!==g) : [...p,g]) }
   function switchMode(m)  { setMode(m); setRecs([]); setError(null); setHasSearched(false) }
 
