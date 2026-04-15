@@ -64,9 +64,14 @@ def init_db():
         )
     """)
 
-    conn.commit()
-    conn.close()
-    print("✓ Database initialised")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS movie_titles (
+            movie_id   INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL,
+            year       INTEGER,
+            poster     TEXT
+        )
+    """)
 
 
 # ── Users ─────────────────────────────────────────────────────
@@ -190,5 +195,58 @@ def get_rating_count() -> int:
     conn = get_conn()
     try:
         return conn.execute("SELECT COUNT(*) FROM ratings").fetchone()[0]
+    finally:
+        conn.close()
+
+# ── Movie Titles ──────────────────────────────────────────────
+
+def save_movie_title(movie_id: int, title: str, year: int | None = None, poster: str | None = None) -> None:
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO movie_titles (movie_id, title, year, poster)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(movie_id)
+            DO UPDATE SET title=excluded.title, year=excluded.year, poster=excluded.poster
+        """, (movie_id, title, year, poster))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_movie_title(movie_id: int) -> dict | None:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM movie_titles WHERE movie_id = ?", (movie_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ── Movie Titles ──────────────────────────────────────────────
+
+def save_movie_title(movie_id: int, title: str, year: int | None = None, poster: str | None = None) -> None:
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO movie_titles (movie_id, title, year, poster)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(movie_id)
+            DO UPDATE SET title=excluded.title, year=excluded.year, poster=excluded.poster
+        """, (movie_id, title, year, poster))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_movie_title(movie_id: int) -> dict | None:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM movie_titles WHERE movie_id = ?", (movie_id,)
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()

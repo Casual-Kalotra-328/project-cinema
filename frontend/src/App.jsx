@@ -15,8 +15,7 @@ function SkeletonCard({ featured }) {
     <div style={{
       flex:featured?"1.3":"1", minWidth:"260px", height:"480px",
       background:"var(--surface)", border:"1px solid var(--border)",
-      borderRadius:"12px", padding:featured?"28px":"22px",
-      overflow:"hidden", position:"relative",
+      borderRadius:"14px", overflow:"hidden", position:"relative",
     }}>
       <div style={{
         position:"absolute", inset:0,
@@ -27,7 +26,7 @@ function SkeletonCard({ featured }) {
         <div key={i} style={{
           height:i===1?"22px":"12px", width:`${w}px`,
           background:"var(--border)", borderRadius:"4px",
-          marginBottom:"14px", opacity:0.5,
+          marginBottom:"14px", margin:"20px 20px 0", opacity:0.5,
         }}/>
       ))}
     </div>
@@ -91,6 +90,7 @@ export default function App() {
   const [user,           setUser]           = useState(null)
   const [page,           setPage]           = useState("home")
   const [recs,           setRecs]           = useState([])
+  const [tmdbRecs,       setTmdbRecs]       = useState([])
   const [loading,        setLoading]        = useState(false)
   const [error,          setError]          = useState(null)
   const [query,          setQuery]          = useState("")
@@ -110,16 +110,12 @@ export default function App() {
 
   function handleLogout() {
     localStorage.removeItem("lumiere_user")
-    setUser(null)
-    setRecs([])
-    setHasSearched(false)
-    setError(null)
-    setMode("user")
-    setQuery("")
-    setSelectedGenres([])
+    setUser(null); setRecs([]); setTmdbRecs([])
+    setHasSearched(false); setError(null)
+    setMode("user"); setQuery(""); setSelectedGenres([])
   }
   function toggleGenre(g) { setSelectedGenres(p => p.includes(g) ? p.filter(x=>x!==g) : [...p,g]) }
-  function switchMode(m)  { setMode(m); setRecs([]); setError(null); setHasSearched(false) }
+  function switchMode(m)  { setMode(m); setRecs([]); setTmdbRecs([]); setError(null); setHasSearched(false) }
 
   const canSearch =
     mode==="user" ||
@@ -127,9 +123,9 @@ export default function App() {
     (mode==="chat"  && query.trim())
 
   async function fetchRecs() {
-    setLoading(true); setError(null); setRecs([]); setHasSearched(true)
+    setLoading(true); setError(null); setRecs([]); setTmdbRecs([]); setHasSearched(true)
     try {
-      let body = { n:3 }
+      let body = { n: 3 }
       if (mode==="user")                                body.user_id       = user.id
       else if (mode==="genre" && selectedGenres.length) body.genres        = selectedGenres
       else if (mode==="chat"  && query)                 body.natural_query = query
@@ -139,12 +135,14 @@ export default function App() {
         body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error((await res.json()).detail ?? "API error")
-      setRecs((await res.json()).recommendations)
+      const data = await res.json()
+      setRecs(data.recommendations ?? [])
+      setTmdbRecs(data.tmdb ?? [])
     } catch(e) { setError(e.message) }
     finally    { setLoading(false) }
   }
 
-  if (!user)          return <UserSetup onComplete={u => setUser(u)} />
+  if (!user)            return <UserSetup onComplete={u => setUser(u)} />
   if (page==="profile") return (
     <Profile
       user={user}
@@ -155,6 +153,12 @@ export default function App() {
       }}
     />
   )
+
+  const tmdbSectionLabel =
+    mode==="user"  ? "Trending picks you might enjoy" :
+    mode==="genre" ? `More ${selectedGenres[0] ?? ""} picks from TMDB` :
+                     "Trending picks matching your mood"
+
   return (
     <div style={{ minHeight:"100vh", background:"var(--bg)" }}>
       <LumiereNav user={user} onProfile={() => setPage("profile")} onLogout={handleLogout} />
@@ -233,6 +237,7 @@ export default function App() {
                   background:"var(--sand)", border:"1px solid var(--border)",
                   borderRadius:"8px", color:"var(--text)", outline:"none",
                   resize:"none", lineHeight:1.6, fontFamily:"inherit",
+                  boxSizing:"border-box",
                 }}
               />
               <p style={{ fontSize:"11px", color:"var(--muted2)", marginTop:"5px", letterSpacing:"0.02em" }}>
@@ -259,31 +264,86 @@ export default function App() {
           </div>
         )}
 
+        {/* Skeletons */}
         {loading && (
           <>
-            <style>{`@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}</style>
+            <style>{`
+              @keyframes shimmer { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+              @keyframes fadeUp  { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+              .fade-up { animation: fadeUp 0.5s ease forwards; opacity:0; }
+            `}</style>
             <div style={{ display:"flex", gap:"20px", flexWrap:"wrap" }}>
               <SkeletonCard featured/><SkeletonCard/><SkeletonCard/>
             </div>
           </>
         )}
 
-        {!loading&&hasSearched&&recs.length===0&&!error&&(
+        {/* Empty state */}
+        {!loading && hasSearched && recs.length===0 && !error && (
           <div style={{ padding:"48px", textAlign:"center", color:"var(--muted2)", fontSize:"14px" }}>
             No recommendations found. Try different inputs.
           </div>
         )}
 
-        {!loading&&recs.length>0&&(
+        {/* ML Recommendations */}
+        {!loading && recs.length > 0 && (
           <>
+            <style>{`
+              @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+              .fade-up { animation: fadeUp 0.5s ease forwards; opacity:0; }
+            `}</style>
+
             <p style={{ fontSize:"11px", letterSpacing:"0.2em", color:"var(--accent3)", textTransform:"uppercase", marginBottom:"20px" }}>
               Your top {recs.length} picks
             </p>
             <div style={{ display:"flex", gap:"20px", alignItems:"flex-start", flexWrap:"wrap" }}>
-              {recs.map((rec,i)=>(
-                <RecommendationCard key={rec.movie_id} rec={rec} rank={i+1} delay={i*120} onRate={()=>setRateMovie(rec)}/>
+              {recs.map((rec,i) => (
+                <RecommendationCard
+                  key={rec.movie_id}
+                  rec={rec}
+                  rank={i+1}
+                  delay={i*120}
+                  onRate={() => setRateMovie(rec)}
+                />
               ))}
             </div>
+
+            {/* TMDB Section — shows for all tabs */}
+            {tmdbRecs.length > 0 && (
+              <>
+                <div style={{
+                  display:"flex", alignItems:"center", gap:"16px",
+                  margin:"52px 0 32px",
+                }}>
+                  <div style={{ flex:1, height:"1px", background:"linear-gradient(90deg, var(--border), transparent)" }}/>
+                  <span style={{ fontSize:"10px", letterSpacing:"0.2em", color:"var(--blue2)", textTransform:"uppercase", whiteSpace:"nowrap", fontWeight:600 }}>
+                    Also worth exploring
+                  </span>
+                  <div style={{ flex:1, height:"1px", background:"linear-gradient(90deg, transparent, var(--border))" }}/>
+                </div>
+
+                <div style={{ marginBottom:"24px" }}>
+                  <p style={{ fontSize:"22px", fontWeight:700, color:"var(--accent2)", fontFamily:"Georgia, serif", marginBottom:"6px" }}>
+                    {tmdbSectionLabel}
+                  </p>
+                  <p style={{ fontSize:"12px", color:"var(--muted2)", letterSpacing:"0.04em" }}>
+                    Live picks from TMDB · updated daily
+                  </p>
+                </div>
+
+                <div style={{ display:"flex", gap:"20px", flexWrap:"wrap", alignItems:"flex-start" }}>
+                  {tmdbRecs.map((rec, i) => (
+                    <RecommendationCard
+                      key={rec.movie_id}
+                      rec={rec}
+                      rank={i+1}
+                      delay={i*100}
+                      onRate={() => setRateMovie(rec)}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -292,8 +352,8 @@ export default function App() {
         <RateModal
           movie={rateMovie}
           userId={user.id}
-          onClose={()=>setRateMovie(null)}
-          onSaved={()=>setRateMovie(null)}
+          onClose={() => setRateMovie(null)}
+          onSaved={() => setRateMovie(null)}
         />
       )}
     </div>

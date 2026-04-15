@@ -53,6 +53,9 @@ export default function RateModal({ movie, userId, onClose, onSaved }) {
           movie_id: movie.movie_id,
           rating:   selected.value,
           review:   review.trim() || null,
+          title:    movie.title   || null,
+          year:     movie.release_year || null,
+          poster:   movie.poster  || null,
         }),
       })
       if (!res.ok) throw new Error("Failed to save")
