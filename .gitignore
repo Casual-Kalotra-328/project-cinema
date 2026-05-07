@@ -12,7 +12,6 @@ ml/models/*.pkl
 ml/models/*.joblib
 
 # Data (too large for git)
-data/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/

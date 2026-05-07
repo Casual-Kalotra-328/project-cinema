@@ -6,7 +6,7 @@ import Profile            from "./pages/Profile"
 import { Avatar }         from "./components/AvatarUpload"
 import MovieSearch        from "./components/MovieSearch"
 
-const API = "http://localhost:8000"
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
 
 const GENRES = ["Action","Comedy","Drama","Romance","Thriller","Sci-Fi","Horror","Animation"]
 
