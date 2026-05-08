@@ -8,8 +8,6 @@ __pycache__/
 *.egg-info/
 
 # Models (too large for git)
-ml/models/*.pkl
-ml/models/*.joblib
 
 # Data (too large for git)
 
