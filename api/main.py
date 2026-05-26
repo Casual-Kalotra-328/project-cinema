@@ -14,7 +14,6 @@ load_dotenv()
 
 from ml.features import load_raw, build_master, build_movie_meta, DATA_DIR
 from ml.predict  import load_models, get_top_n, get_recs_by_genres
-from ml.evaluate import load_rf, explain_movie
 from ml.llm      import build_card_explanation
 from api.db.database import (
     init_db, create_user, get_user, get_user_by_email,
@@ -93,7 +92,6 @@ def tmdb_suggestions(query: str, genres: list, n: int = 3) -> list:
         return []
 
 def tmdb_discover(genres: list, n: int = 3) -> list:
-    """Fallback: use TMDB discover endpoint when search yields nothing."""
     import httpx
     token = os.getenv("TMDB_API_KEY", "")
     if not token: return []
@@ -108,11 +106,11 @@ def tmdb_discover(genres: list, n: int = 3) -> list:
             f"{TMDB_BASE}/discover/movie",
             headers={"Authorization": f"Bearer {token}"},
             params={
-                "with_genres":        ",".join(ids) if ids else "",
-                "sort_by":            "vote_average.desc",
-                "vote_count.gte":     500,
-                "include_adult":      "false",
-                "page":               1,
+                "with_genres":    ",".join(ids) if ids else "",
+                "sort_by":        "vote_average.desc",
+                "vote_count.gte": 500,
+                "include_adult":  "false",
+                "page":           1,
             },
             timeout=5,
         )
@@ -145,12 +143,27 @@ def tmdb_discover(genres: list, n: int = 3) -> list:
         print(f"TMDB discover error: {e}")
         return []
 
-def get_tmdb_picks(query: str, genres: list, n: int = 3) -> list:
-    """Try search first, fall back to discover if search returns < n results."""
-    picks = tmdb_suggestions(query, genres, n=n)
-    if len(picks) < n:
-        picks += tmdb_discover(genres, n=n - len(picks))
-    return picks[:n]
+# ── Simple rule-based explanation (no SHAP, no RAM spike) ────
+def simple_match_reason(rec: dict, user_genres: list, similar: list) -> dict:
+    """
+    Lightweight replacement for SHAP explain_movie.
+    Returns shap_factors=[] and a rule-based match_reason.
+    """
+    tier = rec.get("predicted_tier", "")
+    score = rec.get("hybrid_score", 0)
+
+    if similar:
+        reason = f"Because you loved {similar[0]}"
+    elif score > 0.7:
+        reason = "Critics rate it highly · fits your rating patterns"
+    elif tier in ("Peak Cinema", "Masterpiece"):
+        reason = "Matches your taste profile · highly acclaimed"
+    elif user_genres:
+        reason = f"Fits your love of {user_genres[0]}"
+    else:
+        reason = "Strong match for your taste profile"
+
+    return {"shap_factors": [], "match_reason": reason}
 
 # ── App ───────────────────────────────────────────────────────
 
@@ -164,10 +177,6 @@ async def lifespan(app):
     state["df"]     = build_master(data)
     state["movies"] = build_movie_meta(data["movies"])
     state["models"] = load_models()
-    try:
-        state["rf"] = load_rf()
-    except Exception:
-        state["rf"] = None
     print("✓ Ready")
     yield
     state.clear()
@@ -302,7 +311,6 @@ def recommendations(req: RecommendRequest):
     df      = state["df"]
     movies  = state["movies"]
     ratings = state["data"]["ratings"]
-    rf      = state.get("rf")
 
     if req.natural_query:
         from ml.llm import parse_user_intent
@@ -311,14 +319,17 @@ def recommendations(req: RecommendRequest):
     else:
         genres = req.genres
 
-    # ── Pull user's DB history to personalise everything ──────
+    # ── Pull user DB history ──────────────────────────────────
     db_history   = get_user_history(req.user_id) if req.user_id else []
     top_rated    = [h for h in db_history if h["tier"] in ("Peak Cinema", "Masterpiece")]
     top_ids      = [h["movie_id"] for h in top_rated][:5]
-    similar      = [re.sub(r"\s*\(\d{4}\)\s*", "", t).strip()
-                    for t in movies[movies.movieId.isin(top_ids)].title.tolist()]
+    rated_ids    = {h["movie_id"] for h in db_history}
+    rated_titles = {h["title"].lower() for h in db_history}
 
-    # Derive user's favourite genres from their rating history
+    similar = [re.sub(r"\s*\(\d{4}\)\s*", "", t).strip()
+               for t in movies[movies.movieId.isin(top_ids)].title.tolist()]
+
+    # Derive favourite genres from history
     from ml.features import get_genre_chips
     history_genres: list[str] = []
     if db_history:
@@ -331,20 +342,17 @@ def recommendations(req: RecommendRequest):
                     genre_counter[chip["name"]] += 1
         history_genres = [g for g, _ in genre_counter.most_common(3)]
 
-    # ── Get ML recs ───────────────────────────────────────────
+    # ── ML recs ───────────────────────────────────────────────
     if req.user_id and req.user_id in ratings.userId.values:
         recs = get_top_n(req.user_id, models, ratings, df, movies, n=req.n)
     elif genres:
         recs = get_recs_by_genres(genres, models, df, movies, n=req.n)
     else:
-        # Cold start: use genres derived from DB history if available
         fallback = history_genres if history_genres else ["Drama", "Thriller"]
         recs = get_recs_by_genres(fallback, models, df, movies, n=req.n)
 
     if not recs: raise HTTPException(404, "No recommendations found")
 
-    # ── Exclude movies the user already rated ─────────────────
-    rated_ids = {h["movie_id"] for h in db_history}
     recs = [r for r in recs if r["movie_id"] not in rated_ids] or recs
 
     # ── Fetch posters ─────────────────────────────────────────
@@ -358,30 +366,29 @@ def recommendations(req: RecommendRequest):
         except Exception:
             rec["poster"] = None
 
-    # ── Build LLM cards ───────────────────────────────────────
     user_genres = genres if genres else (history_genres if history_genres else ["Drama", "Thriller"])
 
+    # ── Build cards — lightweight, no SHAP ───────────────────
     cards = []
     for rec in recs:
-        try:
-            exp = explain_movie(rf=rf, movie_id=rec["movie_id"],
-                                user_id=req.user_id or -1, df=df,
-                                predicted_tier=rec["predicted_tier"])
-        except Exception:
-            exp = {"shap_factors": [], "match_reason": "Strong match"}
-        card = build_card_explanation(rec=rec,
-                                      shap_factors=exp["shap_factors"],
-                                      match_reason=exp["match_reason"],
-                                      user_top_genres=user_genres,
-                                      similar_movies=similar)
+        exp  = simple_match_reason(rec, user_genres, similar)
+        card = build_card_explanation(
+            rec=rec,
+            shap_factors=exp["shap_factors"],
+            match_reason=exp["match_reason"],
+            user_top_genres=user_genres,
+            similar_movies=similar,
+        )
         cards.append(card)
 
-    # ── TMDB picks — one card per seed title for variety ─────
+    # ── TMDB picks ────────────────────────────────────────────
     tmdb: list = []
     if req.natural_query:
-        tmdb = get_tmdb_picks(req.natural_query, user_genres, n=3)
+        picks = tmdb_suggestions(req.natural_query, user_genres, n=5)
+        for p in picks:
+            if p["title"].lower() not in rated_titles and len(tmdb) < 3:
+                tmdb.append(p)
     else:
-        # Build 3 different seed titles so each TMDB card is distinct
         seeds: list[str] = []
         if similar:
             seeds += similar[:3]
@@ -390,20 +397,22 @@ def recommendations(req: RecommendRequest):
         if len(seeds) < 3:
             seeds += user_genres
 
-        seen_ids: set = set()
+        seen_tmdb_ids: set = set()
         for seed in seeds[:3]:
-            picks = tmdb_suggestions(seed, user_genres, n=1)
+            picks = tmdb_suggestions(seed, user_genres, n=5)
             for p in picks:
-                if p["movie_id"] not in seen_ids:
-                    seen_ids.add(p["movie_id"])
+                if (p["movie_id"] not in seen_tmdb_ids
+                        and p["title"].lower() not in rated_titles):
+                    seen_tmdb_ids.add(p["movie_id"])
                     tmdb.append(p)
                     break
 
-        # Top up with discover if we still don't have 3
         if len(tmdb) < 3:
-            extras = tmdb_discover(user_genres, n=3)
+            extras = tmdb_discover(user_genres, n=10)
             for e in extras:
-                if e["movie_id"] not in seen_ids and len(tmdb) < 3:
+                if (e["movie_id"] not in seen_tmdb_ids
+                        and e["title"].lower() not in rated_titles
+                        and len(tmdb) < 3):
                     tmdb.append(e)
 
     return {
