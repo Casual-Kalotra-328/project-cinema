@@ -324,7 +324,7 @@ def recommendations(req: RecommendRequest):
     top_rated    = [h for h in db_history if h["tier"] in ("Peak Cinema", "Masterpiece")]
     top_ids      = [h["movie_id"] for h in top_rated][:5]
     rated_ids    = {h["movie_id"] for h in db_history}
-    rated_titles = {h["title"].lower() for h in db_history}
+    rated_titles = {h["title"].lower() for h in db_history if "title" in h}
 
     similar = [re.sub(r"\s*\(\d{4}\)\s*", "", t).strip()
                for t in movies[movies.movieId.isin(top_ids)].title.tolist()]
