@@ -1,15 +1,12 @@
 # ============================================================
 #  ml/evaluate.py
 #  Project Cinema — Explainability & Evaluation
-#  Computes SHAP values per prediction and global importance.
-#  Powers the "why this movie?" card explanation.
-#  Run: python -m ml.evaluate
+#  Memory-optimized: SHAP explainer cached, not recreated per request
 # ============================================================
 
 import joblib
 import numpy as np
 import pandas as pd
-import shap
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -38,6 +35,16 @@ SHAP_LABELS = {
     "Animation":          "Animation",
 }
 
+# ── Cached explainer — created once, reused forever ──────────
+_explainer_cache = None
+
+def get_explainer(rf):
+    global _explainer_cache
+    if _explainer_cache is None:
+        import shap
+        _explainer_cache = shap.TreeExplainer(rf)
+    return _explainer_cache
+
 
 # ── Load ──────────────────────────────────────────────────────
 
@@ -45,49 +52,13 @@ def load_rf():
     return joblib.load(f"{MODELS_DIR}/rf_model.pkl")
 
 
-# ── Global SHAP ───────────────────────────────────────────────
-
-def global_shap(rf, X_sample: pd.DataFrame) -> pd.Series:
-    """
-    Compute mean |SHAP| across all tiers for a sample.
-    Returns a Series sorted by importance descending.
-    """
-    print("Computing global SHAP values...")
-    explainer = shap.TreeExplainer(rf)
-    shap_vals = explainer.shap_values(X_sample)
-
-    # Handle both old (list) and new (3D array) SHAP formats
-    if isinstance(shap_vals, list):
-        mean_shap = np.mean([np.abs(sv).mean(0)
-                             for sv in shap_vals], 0)
-    else:
-        mean_shap = np.abs(shap_vals).mean(axis=(0, 2)) \
-            if shap_vals.ndim == 3 \
-            else np.abs(shap_vals).mean(0)
-
-    importance = (pd.Series(mean_shap, index=FEATURES)
-                  .rename(index=SHAP_LABELS)
-                  .sort_values(ascending=False))
-    print("  ✓ done")
-    return importance
-
-
 # ── Per-prediction SHAP ───────────────────────────────────────
 
 def explain_prediction(rf, X_row: pd.DataFrame,
                         predicted_tier: str) -> list[dict]:
-    """
-    Compute SHAP values for a single prediction row.
-    Returns top 4 features as a list of dicts for the UI:
-      [{ label, value, direction, pct }, ...]
-
-    direction: "up" = pushed toward predicted tier
-               "down" = pulled away from predicted tier
-    """
-    explainer = shap.TreeExplainer(rf)
+    explainer = get_explainer(rf)
     shap_vals = explainer.shap_values(X_row)
 
-    # Get SHAP values for the predicted tier class
     classes = list(rf.classes_)
     if predicted_tier in classes:
         tier_idx = classes.index(predicted_tier)
@@ -100,7 +71,6 @@ def explain_prediction(rf, X_row: pd.DataFrame,
         sv = shap_vals[0, :, tier_idx] \
             if shap_vals.ndim == 3 else shap_vals[0]
 
-    # Build feature importance list
     feature_shap = list(zip(FEATURES, sv))
     feature_shap.sort(key=lambda x: abs(x[1]), reverse=True)
 
@@ -126,11 +96,6 @@ def explain_prediction(rf, X_row: pd.DataFrame,
 def build_match_reason(shap_factors: list[dict],
                        predicted_tier: str,
                        movie_title: str) -> str:
-    """
-    Convert top SHAP factors into a single bold headline
-    shown on the recommendation card.
-    e.g. "Because critics love it and matches your taste"
-    """
     top = shap_factors[0]["feature"] if shap_factors else ""
 
     reasons = {
@@ -169,17 +134,11 @@ def build_match_reason(shap_factors: list[dict],
 def explain_movie(rf, movie_id: int, user_id: int,
                   df: pd.DataFrame,
                   predicted_tier: str) -> dict:
-    """
-    Full explanation package for one recommendation card.
-    Returns shap_factors + match_reason + tier_meta.
-    """
-    # Get the feature row for this user-movie pair
     row = df[(df.movieId == movie_id)][FEATURES].head(1)
     if row.empty:
         return {"shap_factors": [], "match_reason": "Strong match",
                 "tier_meta": get_tier_meta(predicted_tier)}
 
-    # Override user features with actual user stats
     user_row = df[df.userId == user_id][FEATURES].head(1)
     if not user_row.empty:
         for col in ["user_avg_rating", "user_rating_count",
@@ -210,12 +169,6 @@ if __name__ == "__main__":
     X, y = get_X_y(df)
     rf   = load_rf()
 
-    # Global importance
-    print("\n--- Global SHAP Importance ---")
-    importance = global_shap(rf, X.iloc[:300])
-    print(importance.round(4).to_string())
-
-    # Per-prediction explanation for movie 1 / user 1
     print("\n--- Per-prediction explanation ---")
     print("Movie: Toy Story (1995) | User: 1")
     explanation = explain_movie(rf, 1, 1, df, "Masterpiece")
