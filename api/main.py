@@ -164,14 +164,21 @@ async def lifespan(app):
     state["df"]     = build_master(data)
     state["movies"] = build_movie_meta(data["movies"])
     state["models"] = load_models()
-    state["rf"]     = load_rf()
+    try:
+        state["rf"] = load_rf()
+    except Exception:
+        state["rf"] = None
     print("✓ Ready")
     yield
     state.clear()
 
 app = FastAPI(title="Lumière API", version="2.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 # ── Request models ────────────────────────────────────────────
 
@@ -295,7 +302,7 @@ def recommendations(req: RecommendRequest):
     df      = state["df"]
     movies  = state["movies"]
     ratings = state["data"]["ratings"]
-    rf      = state["rf"]
+    rf      = state.get("rf")
 
     if req.natural_query:
         from ml.llm import parse_user_intent
@@ -356,9 +363,12 @@ def recommendations(req: RecommendRequest):
 
     cards = []
     for rec in recs:
-        exp  = explain_movie(rf=rf, movie_id=rec["movie_id"],
-                             user_id=req.user_id or -1, df=df,
-                             predicted_tier=rec["predicted_tier"])
+        try:
+            exp = explain_movie(rf=rf, movie_id=rec["movie_id"],
+                                user_id=req.user_id or -1, df=df,
+                                predicted_tier=rec["predicted_tier"])
+        except Exception:
+            exp = {"shap_factors": [], "match_reason": "Strong match"}
         card = build_card_explanation(rec=rec,
                                       shap_factors=exp["shap_factors"],
                                       match_reason=exp["match_reason"],
