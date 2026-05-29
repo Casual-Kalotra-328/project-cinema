@@ -3,7 +3,7 @@ import TierBadge from "../components/TierBadge"
 import { GenreChipList } from "../components/GenreChip"
 import AvatarUpload, { Avatar } from "../components/AvatarUpload"
 
-const API = "http://localhost:8000"
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
 
 const TIER_ORDER = ["Peak Cinema","Masterpiece","Great Watch","Mid","Skip"]
 const TIER_COLORS = {
